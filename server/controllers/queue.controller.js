@@ -4,6 +4,7 @@ import Doctor from '../models/Doctor.model.js'
 import { getDayName } from '../utils/slot.util.js'
 import { getTokenSchema } from '../validators/queue.validator.js'
 import { emitQueueEvent } from '../sockets/index.js'
+import { generateQueueToken } from '../services/queue.service.js'
 import { createNotification } from '../services/notification.service.js'
 
 export async function getToken(req, res) {
@@ -12,7 +13,7 @@ export async function getToken(req, res) {
     if (!parsed.success) {
       return res.status(400).json({ success: false, message: parsed.error.issues[0].message })
     }
-    const { doctorId, date, reason, patientDetails,paymentMethod } = parsed.data
+    const { doctorId, date, reason, patientDetails, paymentMethod } = parsed.data
 
     const doctor = await Doctor.findById(doctorId)
     if (!doctor || doctor.verificationStatus !== 'verified') {
@@ -61,31 +62,12 @@ export async function getToken(req, res) {
       paymentMethod,
     })
 
-    let queueEntry = null
-    let attempts = 0
-    const MAX_ATTEMPTS = 5
-
-    while (!queueEntry && attempts < MAX_ATTEMPTS) {
-      const lastToken = await Queue.findOne({ doctor: doctorId, date }).sort({ tokenNumber: -1 })
-      const nextTokenNumber = lastToken ? lastToken.tokenNumber + 1 : 1
-
-      try {
-        queueEntry = await Queue.create({
-          doctor: doctorId,
-          date,
-          tokenNumber: nextTokenNumber,
-          patient: req.user.id,
-          appointment: appointment._id,
-          status: 'waiting',
-        })
-      } catch (err) {
-        if (err.code === 11000) {
-          attempts++
-          continue
-        }
-        throw err
-      }
-    }
+    const queueEntry = await generateQueueToken({
+      doctorId,
+      date,
+      patientId: req.user.id,
+      appointmentId: appointment._id,
+    })
 
     if (!queueEntry) {
       await Appointment.findByIdAndDelete(appointment._id)
@@ -95,8 +77,24 @@ export async function getToken(req, res) {
     appointment.tokenNumber = queueEntry.tokenNumber
     await appointment.save()
 
-    // Naya patient queue mein juda — doctor ki screen ko turant batao
     emitQueueEvent(doctorId, date, 'queue:updated')
+
+    // ---- NAYA: Patient ko confirmation, aur Doctor ko naya token aane ki notification ----
+    await createNotification({
+      userId: req.user.id,
+      type: 'queue',
+      title: 'Token Confirmed',
+      message: `Your token #${queueEntry.tokenNumber} for ${doctor.name} has been generated.`,
+      relatedQueue: queueEntry._id,
+    })
+
+    await createNotification({
+      userId: doctor.user,
+      type: 'queue',
+      title: 'New Token Generated',
+      message: `${patientDetails.name} has taken token #${queueEntry.tokenNumber} for today.`,
+      relatedQueue: queueEntry._id,
+    })
 
     res.status(201).json({ success: true, message: 'Token generated', queueEntry, appointment })
   } catch (error) {
@@ -169,6 +167,10 @@ export async function cancelToken(req, res) {
     queueEntry.status = 'cancelled'
     await queueEntry.save()
 
+    if (queueEntry.appointment) {
+      await Appointment.findByIdAndUpdate(queueEntry.appointment, { appointmentStatus: 'cancelled' })
+    }
+
     emitQueueEvent(queueEntry.doctor.toString(), queueEntry.date, 'queue:cancelled')
 
     res.json({ success: true, message: 'Token cancelled', queueEntry })
@@ -230,17 +232,15 @@ export async function callNextPatient(req, res) {
     next.calledAt = new Date()
     await next.save()
 
-    // Sabse important emit — patient ki screen pe turant "You're being called" dikhna chahiye
     emitQueueEvent(doctor._id.toString(), date, 'queue:called')
-    await createNotification({
-  userId: next.patient,
-  type: 'queue',
-  title: "You're being called!",
-  message: `Please reach the clinic now. Your token #${next.tokenNumber} is being called.`,
-  relatedQueue: next._id,
-})
 
-res.json({ success: true, message: 'Next patient called', queueEntry: next })
+    await createNotification({
+      userId: next.patient,
+      type: 'queue',
+      title: "You're being called!",
+      message: `Please reach the clinic now. Your token #${next.tokenNumber} is being called.`,
+      relatedQueue: next._id,
+    })
 
     res.json({ success: true, message: 'Next patient called', queueEntry: next })
   } catch (error) {
@@ -291,8 +291,19 @@ export async function completeConsultation(req, res) {
     entry.completedAt = new Date()
     await entry.save()
 
-    // Consultation complete hote hi doctor ki own screen ko bhi "Call Next" button wapas dikhana hai,
-    // aur next waiting patient ki "patients ahead" count bhi ghatani hai — isliye 'queue:completed' bhejte hain
+    // Linked Appointment ko bhi 'completed' kar do — dono taraf se sync
+    if (entry.appointment) {
+      await Appointment.findByIdAndUpdate(entry.appointment, { appointmentStatus: 'completed' })
+
+      await createNotification({
+        userId: entry.patient,
+        type: 'appointment',
+        title: 'Consultation Completed',
+        message: 'Your appointment has been marked as completed. We hope you feel better soon!',
+        relatedAppointment: entry.appointment,
+      })
+    }
+
     emitQueueEvent(entry.doctor.toString(), entry.date, 'queue:completed')
 
     res.json({ success: true, message: 'Consultation completed', queueEntry: entry })
@@ -312,6 +323,11 @@ export async function markNoShow(req, res) {
 
     entry.status = 'no_show'
     await entry.save()
+
+    // Linked Appointment ko bhi 'no_show' kar do — dono taraf se sync
+    if (entry.appointment) {
+      await Appointment.findByIdAndUpdate(entry.appointment, { appointmentStatus: 'no_show' })
+    }
 
     emitQueueEvent(entry.doctor.toString(), entry.date, 'queue:updated')
 

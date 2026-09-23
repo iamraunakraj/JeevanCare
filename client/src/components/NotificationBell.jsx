@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { IconButton, Badge, Menu, MenuItem, Typography, Button, Divider } from '@mui/material'
 import NotificationsIcon from '@mui/icons-material/Notifications'
 import { getMyNotifications, markAsRead, markAllAsRead } from '../services/notification.service.js'
@@ -14,6 +15,7 @@ function timeAgo(dateStr) {
 }
 
 function NotificationBell() {
+  const navigate = useNavigate()
   const [anchorEl, setAnchorEl] = useState(null)
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -28,15 +30,13 @@ function NotificationBell() {
     }
   }, [])
 
-  // Har 15 second mein naye notifications check karo (light-weight polling —
-  // Socket.IO idhar bhi use kar sakte the, lekin notification count itna time-critical nahi hai)
   useEffect(() => {
     loadNotifications()
     const interval = setInterval(loadNotifications, 15000)
     return () => clearInterval(interval)
   }, [loadNotifications])
 
-  async function handleOpen(e) {
+  function handleOpen(e) {
     setAnchorEl(e.currentTarget)
   }
 
@@ -45,15 +45,19 @@ function NotificationBell() {
   }
 
   async function handleNotificationClick(notification) {
-    if (!notification.isRead) {
-      await markAsRead(notification._id)
-      loadNotifications()
-    }
+    await markAsRead(notification._id)
+    loadNotifications() // read hote hi list se gayab ho jaayegi (kyunki ab sirf unread fetch hoti hai)
   }
 
   async function handleMarkAllRead() {
     await markAllAsRead()
     loadNotifications()
+    handleClose()
+  }
+
+  function handleSeeAll() {
+    handleClose()
+    navigate('/notifications')
   }
 
   return (
@@ -64,14 +68,11 @@ function NotificationBell() {
         </Badge>
       </IconButton>
 
-      <Menu
-  anchorEl={anchorEl}
-  open={!!anchorEl}
-  onClose={handleClose}
-  slotProps={{ paper: { className: 'w-80 max-h-96' } }}
->
+      <Menu anchorEl={anchorEl} open={!!anchorEl} onClose={handleClose} slotProps={{ paper: { className: 'w-80 max-h-96' } }}>
         <div className="flex items-center justify-between px-3 py-2">
-          <Typography variant="subtitle2" className="font-semibold">Notifications</Typography>
+          <Typography variant="subtitle2" className="font-semibold">
+            {unreadCount > 0 ? `New (${unreadCount})` : 'Notifications'}
+          </Typography>
           {unreadCount > 0 && (
             <Button size="small" onClick={handleMarkAllRead}>Mark all read</Button>
           )}
@@ -79,13 +80,13 @@ function NotificationBell() {
         <Divider />
 
         {notifications.length === 0 ? (
-          <MenuItem disabled>No notifications yet</MenuItem>
+          <MenuItem disabled>No new notifications</MenuItem>
         ) : (
           notifications.map((n) => (
             <MenuItem
               key={n._id}
               onClick={() => handleNotificationClick(n)}
-              className={!n.isRead ? 'bg-blue-50' : ''}
+              className="bg-blue-50"
               sx={{ whiteSpace: 'normal', alignItems: 'flex-start' }}
             >
               <div className="py-1">
@@ -96,6 +97,11 @@ function NotificationBell() {
             </MenuItem>
           ))
         )}
+
+        <Divider />
+        <MenuItem onClick={handleSeeAll} className="justify-center text-primary font-medium text-sm">
+          See all notifications
+        </MenuItem>
       </Menu>
     </>
   )

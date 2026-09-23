@@ -1,12 +1,12 @@
-import { createNotification } from '../services/notification.service.js'
 import Appointment from '../models/Appointment.model.js'
 import Doctor from '../models/Doctor.model.js'
 import Queue from '../models/Queue.model.js'
 import { generateSlots, getDayName } from '../utils/slot.util.js'
 import { createAppointmentSchema } from '../validators/appointment.validator.js'
-import { generateTokenForDoctor } from '../services/tokenGenerator.service.js'
+import { createNotification } from '../services/notification.service.js'
+import { generateQueueToken } from '../services/queue.service.js'
+import { emitQueueEvent } from '../sockets/index.js'
 
-// Public — ek doctor ke ek din ke available slots dikhata hai
 export async function getAvailableSlots(req, res) {
   try {
     const { doctorId } = req.params
@@ -25,7 +25,6 @@ export async function getAvailableSlots(req, res) {
     const scheduleEntry = doctor.schedule.find((entry) => entry.day === dayName)
     const allSlots = generateSlots(scheduleEntry, doctor.averageConsultationTime, date)
 
-    // Jo slots already book ho chuke hain (pending/confirmed appointments), unhe hata do
     const bookedAppointments = await Appointment.find({
       doctor: doctorId,
       date,
@@ -41,6 +40,7 @@ export async function getAvailableSlots(req, res) {
     res.status(500).json({ success: false, message: 'Something went wrong' })
   }
 }
+
 export async function createAppointment(req, res) {
   try {
     const parsed = createAppointmentSchema.safeParse(req.body)
@@ -87,8 +87,23 @@ export async function createAppointment(req, res) {
       amount: doctor.consultationFee,
       appointmentStatus: 'confirmed',
       paymentStatus: 'payment_pending',
-      paymentMethod, // yeh line add ki
+      paymentMethod,
     })
+
+    // Appointment ke saath ek Queue token bhi generate karo, taaki doctor ki
+    // Live Queue mein yeh patient bhi dikhe aur patient apna number track kar sake
+    const queueEntry = await generateQueueToken({
+      doctorId,
+      date,
+      patientId: req.user.id,
+      appointmentId: appointment._id,
+    })
+
+    if (queueEntry) {
+      appointment.tokenNumber = queueEntry.tokenNumber
+      await appointment.save()
+      emitQueueEvent(doctorId, date, 'queue:updated')
+    }
 
     await createNotification({
       userId: doctor.user,
@@ -97,18 +112,14 @@ export async function createAppointment(req, res) {
       message: `${patientDetails.name} booked an appointment on ${date} at ${time}.`,
       relatedAppointment: appointment._id,
     })
-    //chatgpt se 
-    
-    //itni door patient appoint k liye
 
-    res.status(201).json({ success: true, message: 'Appointment booked successfully', appointment })
+    res.status(201).json({ success: true, message: 'Appointment booked successfully', appointment, queueEntry })
   } catch (error) {
     console.error(error)
     res.status(500).json({ success: false, message: 'Something went wrong' })
   }
 }
 
-// Patient apne saare appointments dekhta hai
 export async function getMyAppointments(req, res) {
   try {
     const appointments = await Appointment.find({ patient: req.user.id })
@@ -129,7 +140,6 @@ export async function cancelAppointment(req, res) {
       return res.status(404).json({ success: false, message: 'Appointment not found' })
     }
 
-    // Sirf apna hi appointment cancel kar sake — dusre ka ID daal kar nahi
     if (appointment.patient.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized' })
     }
@@ -141,6 +151,15 @@ export async function cancelAppointment(req, res) {
     appointment.appointmentStatus = 'cancelled'
     await appointment.save()
 
+    // Appointment cancel hote hi uska linked Queue token bhi cancel karo,
+    // warna woh 'waiting' mein hi atka reh jaayega
+    const queueEntry = await Queue.findOne({ appointment: appointment._id })
+    if (queueEntry && queueEntry.status === 'waiting') {
+      queueEntry.status = 'cancelled'
+      await queueEntry.save()
+      emitQueueEvent(appointment.doctor.toString(), appointment.date, 'queue:cancelled')
+    }
+
     res.json({ success: true, message: 'Appointment cancelled', appointment })
   } catch (error) {
     console.error(error)
@@ -148,7 +167,6 @@ export async function cancelAppointment(req, res) {
   }
 }
 
-// Doctor apne appointments dekhta hai (date se filter kar sakta hai)
 export async function getDoctorAppointments(req, res) {
   try {
     const doctor = await Doctor.findOne({ user: req.user.id })
@@ -171,7 +189,6 @@ export async function getDoctorAppointments(req, res) {
   }
 }
 
-// Doctor appointment ka status update kare (completed / no-show)
 export async function updateAppointmentStatus(req, res) {
   try {
     const { status } = req.body
@@ -188,22 +205,40 @@ export async function updateAppointmentStatus(req, res) {
       return res.status(404).json({ success: false, message: 'Appointment not found' })
     }
 
-    // Doctor sirf apne hi clinic ke appointments update kar sake
     if (appointment.doctor.toString() !== doctor._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized' })
     }
 
     appointment.appointmentStatus = status
     await appointment.save()
+
+    // Appointment status badalte hi uske linked Queue token ko bhi sync karo —
+    // isse doctor ko Appointments page aur Queue page dono jagah alag-alag
+    // update nahi karna padta, ek jagah se dono sync ho jaate hain.
+    const queueEntry = await Queue.findOne({ appointment: appointment._id })
+    if (queueEntry && !['completed', 'cancelled', 'no_show'].includes(queueEntry.status)) {
+      const statusMap = {
+        completed: 'completed',
+        no_show: 'no_show',
+        cancelled: 'cancelled',
+        rejected: 'cancelled', // Queue model mein 'rejected' status nahi hai
+      }
+      queueEntry.status = statusMap[status]
+      if (status === 'completed') queueEntry.completedAt = new Date()
+      await queueEntry.save()
+
+      emitQueueEvent(appointment.doctor.toString(), appointment.date, 'queue:updated')
+    }
+
     if (status === 'completed') {
-  await createNotification({
-    userId: appointment.patient,
-    type: 'appointment',
-    title: 'Consultation Completed',
-    message: 'Your appointment has been marked as completed. We hope you feel better soon!',
-    relatedAppointment: appointment._id,
-  })
-}
+      await createNotification({
+        userId: appointment.patient,
+        type: 'appointment',
+        title: 'Consultation Completed',
+        message: 'Your appointment has been marked as completed. We hope you feel better soon!',
+        relatedAppointment: appointment._id,
+      })
+    }
 
     res.json({ success: true, message: 'Appointment updated', appointment })
   } catch (error) {
@@ -211,4 +246,3 @@ export async function updateAppointmentStatus(req, res) {
     res.status(500).json({ success: false, message: 'Something went wrong' })
   }
 }
-

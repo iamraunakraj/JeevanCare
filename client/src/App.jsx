@@ -18,6 +18,7 @@ import PatientAppointments from './pages/PatientAppointments.jsx'
 import DoctorAppointments from './pages/DoctorAppointments.jsx'
 import GetToken from './pages/GetToken.jsx'
 import DoctorQueue from './pages/DoctorQueue.jsx'
+import AllNotifications from './pages/AllNotifications.jsx'
 import AdminDashboard from './pages/admin/AdminDashboard.jsx'
 import AdminDoctors from './pages/admin/AdminDoctors.jsx'
 import AdminPatients from './pages/admin/AdminPatients.jsx'
@@ -36,6 +37,15 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
+        <Route
+          path="/notifications"
+          element={
+            <ProtectedRoute allowedRoles={['patient', 'doctor', 'admin']}>
+              <AllNotifications />
+            </ProtectedRoute>
+          }
+        />
+
         <Route path="/patient/dashboard" element={<ProtectedRoute allowedRoles={['patient']}><PatientDashboard /></ProtectedRoute>} />
         <Route path="/patient/appointments" element={<ProtectedRoute allowedRoles={['patient']}><PatientAppointments /></ProtectedRoute>} />
         <Route path="/book/:doctorId" element={<ProtectedRoute allowedRoles={['patient']}><BookAppointment /></ProtectedRoute>} />
@@ -47,7 +57,6 @@ function App() {
         <Route path="/doctor/queue" element={<ProtectedRoute allowedRoles={['doctor']}><DoctorQueue /></ProtectedRoute>} />
       </Route>
 
-      {/* Admin ka layout alag hai — Navbar/Footer nahi, sidebar hai */}
       <Route
         element={
           <ProtectedRoute allowedRoles={['admin']}>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Tabs, Tab, Chip, Button, CircularProgress, Avatar } from '@mui/material'
 import { getMyAppointments, cancelAppointment } from '../services/appointment.service.js'
 import { openRazorpayCheckout } from '../services/payment.service.js'
@@ -141,7 +142,17 @@ async function reconcilePendingPayments(appts) {
                         {cancellingId === appt._id ? 'Cancelling...' : 'Cancel Appointment'}
                       </Button>
                     )}
-
+                       {['pending', 'confirmed'].includes(appt.appointmentStatus) && appt.tokenNumber && (
+                         <Button
+                   size="small"
+                        variant="outlined"
+                             component={Link}
+                                to={`/token/${appt.doctor?._id}`}
+                                      className="mt-2 mr-2"
+                                     >
+                             Track Queue (Token #{appt.tokenNumber})
+                            </Button>
+                       )}
                     {isUpcoming && !isPaid && (
                       <Button
                         size="small"
