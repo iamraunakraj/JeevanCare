@@ -6,6 +6,7 @@ import LocationOnIcon from '@mui/icons-material/LocationOn'
 import VerifiedIcon from '@mui/icons-material/Verified'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
+import SearchAutocomplete from '../components/SearchAutocomplete.jsx'
 
 const POPULAR_SPECIALIZATIONS = [
   'Cardiologist', 'Dentist', 'Dermatologist', 'Orthopedic', 'ENT',
@@ -45,34 +46,9 @@ function Home() {
             Book appointments and get digital tokens — track your queue in real time from home.
           </p>
 
-          <div className="max-w-2xl mx-auto mt-8 flex flex-col sm:flex-row gap-3 bg-white p-2 rounded-2xl shadow-xl">
-            <TextField
-              fullWidth
-              placeholder="Search doctor, specialization, clinic or area"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              variant="standard"
-              slotProps={{
-                input: {
-                  disableUnderline: true,
-                  startAdornment: (
-                    <InputAdornment position="start"><SearchIcon className="text-gray-400" /></InputAdornment>
-                  ),
-                },
-              }}
-              className="px-2"
-            />
-            <Button
-              variant="contained"
-              size="large"
-              onClick={handleSearch}
-              className="whitespace-nowrap"
-              sx={{ px: 4 }}
-            >
-              Search
-            </Button>
-          </div>
+          <div className="max-w-2xl mx-auto mt-8 bg-white p-2 rounded-2xl shadow-xl">
+  <SearchAutocomplete variant="hero" />
+</div>
 
           <div className="flex flex-wrap justify-center gap-2 mt-8">
             {POPULAR_SPECIALIZATIONS.map((spec) => (

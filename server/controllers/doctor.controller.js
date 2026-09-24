@@ -150,3 +150,48 @@ export async function getFilterOptions(req, res) {
     res.status(500).json({ success: false, message: 'Something went wrong' })
   }
 }
+// Typeahead suggestions — patient jaise-jaise type kare, matching results turant dikhao
+export async function getSearchSuggestions(req, res) {
+  try {
+    const { q } = req.query
+    if (!q || q.trim().length < 1) {
+      return res.json({ success: true, suggestions: [] })
+    }
+
+    const regex = new RegExp(q.trim(), 'i') // case-insensitive partial match
+
+    // Specializations jo match karte hain (unique list, max 4)
+    const matchingSpecializations = await Doctor.distinct('specialization', {
+      verificationStatus: 'verified',
+      specialization: regex,
+    })
+
+    // Doctors jinka naam ya clinic naam match kare (max 5)
+    const matchingDoctors = await Doctor.find({
+      verificationStatus: 'verified',
+      $or: [{ name: regex }, { clinicName: regex }],
+    })
+      .select('name specialization clinicName area photo')
+      .limit(5)
+
+    const suggestions = [
+      ...matchingSpecializations.slice(0, 4).map((spec) => ({
+        type: 'specialization',
+        label: spec,
+        subtitle: 'Specialization',
+      })),
+      ...matchingDoctors.map((doc) => ({
+        type: 'doctor',
+        label: doc.name,
+        subtitle: `${doc.specialization} · ${doc.clinicName}, ${doc.area}`,
+        doctorId: doc._id,
+        photo: doc.photo,
+      })),
+    ]
+
+    res.json({ success: true, suggestions })
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ success: false, message: 'Something went wrong' })
+  }
+}

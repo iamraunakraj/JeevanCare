@@ -24,3 +24,7 @@ export async function getFilterOptions() {
   const res = await api.get('/doctors/filter-options')
   return res.data
 }
+export async function getSearchSuggestions(query) {
+  const res = await api.get('/doctors/suggestions', { params: { q: query } })
+  return res.data
+}

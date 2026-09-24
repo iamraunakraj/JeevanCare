@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
+
 import {
   TextField,
   Select,
@@ -14,6 +15,7 @@ import {
 import SearchIcon from '@mui/icons-material/Search'
 import DoctorCard from '../components/DoctorCard.jsx'
 import { searchDoctors, getFilterOptions } from '../services/doctor.service.js'
+import SearchAutocomplete from '../components/SearchAutocomplete.jsx'
 
 function Doctors() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -87,23 +89,9 @@ function Doctors() {
 
       {/* Filters bar */}
       <div className="flex flex-wrap gap-3 mb-6 items-center">
-        <TextField
-          size="small"
-          placeholder="Search doctor, specialization, clinic, or area"
-          defaultValue={search}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') updateParam('search', e.target.value)
-          }}
-          onBlur={(e) => updateParam('search', e.target.value)}
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>
-              ),
-            },
-          }}
-          className="min-w-[280px] flex-1"
-        />
+        <div className="min-w-[280px] flex-1">
+         <SearchAutocomplete />
+    </div>
 
         {filtersLoaded && (
   <FormControl size="small" className="min-w-[160px]">
